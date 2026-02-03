@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: ice-timescaledb
+    environment:
+      POSTGRES_USER: ice_tracker
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+      POSTGRES_DB: ice_activities
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ice_tracker"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  python-collector:
+    build: ./python-collector
+    container_name: ice-python-collector
+    environment:
+      TIMESCALE_HOST: timescaledb
+      TIMESCALE_PORT: 5432
+      TIMESCALE_USER: ice_tracker
+      TIMESCALE_PASSWORD: ${TIMESCALE_PASSWORD}
+      TIMESCALE_DATABASE: ice_activities
+      SCHEDULER_TIMEZONE: America/Chicago
+      LOG_LEVEL: INFO
+    volumes:
+      - ./data:/data
+      - ./logs:/logs
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  go-realtime:
+    build: ./go-realtime
+    container_name: ice-go-realtime
+    environment:
+      TIMESCALE_HOST: timescaledb
+      TIMESCALE_PORT: 5432
+      TIMESCALE_USER: ice_tracker
+      TIMESCALE_PASSWORD: ${TIMESCALE_PASSWORD}
+      TIMESCALE_DATABASE: ice_activities
+      POLL_INTERVAL_MINUTES: 30
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  go-api:
+    build: ./go-api
+    container_name: ice-go-api
+    environment:
+      TIMESCALE_HOST: timescaledb
+      TIMESCALE_PORT: 5432
+      TIMESCALE_USER: ice_tracker
+      TIMESCALE_PASSWORD: ${TIMESCALE_PASSWORD}
+      TIMESCALE_DATABASE: ice_activities
+      API_PORT: 8080
+      API_HOST: 0.0.0.0
+    ports:
+      - "8081:8080"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  timescale-data:
